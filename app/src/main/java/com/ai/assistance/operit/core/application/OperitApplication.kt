@@ -37,7 +37,6 @@ import com.ai.assistance.operit.core.workflow.WorkflowSchedulerInitializer
 import com.ai.assistance.operit.data.backup.RoomDatabaseBackupPreferences
 import com.ai.assistance.operit.data.backup.RoomDatabaseBackupScheduler
 import com.ai.assistance.operit.data.db.AppDatabase
-import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.ExternalHttpApiPreferences
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.preferences.WakeWordPreferences
@@ -228,13 +227,6 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             .also { it.start() }
         AppLogger.d(TAG, "【启动计时】长期记忆自动保存轮询器启动完成 - ${System.currentTimeMillis() - startTime}ms")
 
-        // 初始化功能提示词管理器
-        applicationScope.launch {
-            val characterStartTime = System.currentTimeMillis()
-            CharacterCardManager.getInstance(applicationContext).initializeIfNeeded()
-            AppLogger.d(TAG, "【启动计时】功能提示词管理器初始化完成（异步） - ${System.currentTimeMillis() - characterStartTime}ms")
-        }
-
         // 初始化当前活跃角色目标的自定义表情
         applicationScope.launch {
             val emojiStartTime = System.currentTimeMillis()
@@ -366,6 +358,17 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             val toolHandler = AIToolHandler.getInstance(this@OperitApplication)
             toolHandler.registerDefaultTools()
             AppLogger.d(TAG, "【启动计时】AIToolHandler初始化并注册工具完成（异步/串行） - ${System.currentTimeMillis() - toolStartTime}ms")
+
+            // Initialize OperitX integration modules (provider, orchestration, memory)
+            val nonoStartTime = System.currentTimeMillis()
+            try {
+                com.ai.assistance.operit.core.integration.NonOIntegrationManager.initialize(this@OperitApplication)
+                // Register tool sanitizer hook for XML contamination fix (§10)
+                toolHandler.addToolHook(com.ai.assistance.operit.core.tools.sanitizer.ToolSanitizerHook())
+                AppLogger.d(TAG, "【启动计时】NonOIntegrationManager初始化完成（异步/串行） - ${System.currentTimeMillis() - nonoStartTime}ms")
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "NonOIntegrationManager initialization failed", e)
+            }
         }
         
         // 初始化工作流调度器（异步）

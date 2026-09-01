@@ -40,6 +40,15 @@ class MessageCopyTextTest {
         assertEquals("<meta charset=\"utf-8\">visibleanswer", cleanMessageContentForCopy(content))
     }
 
+    @Test fun cleanMessageContentForCopy_removesOpenAiResponsesOutputItemMetadata() {
+        val content =
+            "answer" +
+                "<meta provider=\"openai:responses_output_item\">payload</meta>" +
+                "<search provider=\"deepseek\"><query>q</query></search>"
+
+        assertEquals("answer", cleanMessageContentForCopy(content))
+    }
+
     @Test fun buildSelectedMessagesPlainText_usesMessageOrderAndPlainTextConversion() = runTest {
         val chatHistory =
             listOf(

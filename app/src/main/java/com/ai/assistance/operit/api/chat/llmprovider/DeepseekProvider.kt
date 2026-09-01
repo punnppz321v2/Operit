@@ -4,16 +4,14 @@ import android.content.Context
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.data.model.ApiProviderType
+import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.ToolPrompt
-import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.stream.Stream
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -28,11 +26,13 @@ class DeepseekProvider(
     modelName: String,
     client: OkHttpClient,
     customHeaders: Map<String, String> = emptyMap(),
-    providerType: com.ai.assistance.operit.data.model.ApiProviderType = com.ai.assistance.operit.data.model.ApiProviderType.DEEPSEEK,
+    providerType: ApiProviderType = ApiProviderType.DEEPSEEK,
     supportsVision: Boolean = false,
     supportsAudio: Boolean = false,
     supportsVideo: Boolean = false,
-    enableToolCall: Boolean = false
+    enableToolCall: Boolean = false,
+    thinkingConfigurations: String = "",
+    thinkingOptionId: String = ""
 ) : OpenAIProvider(
         apiEndpoint = apiEndpoint,
         apiKeyProvider = apiKeyProvider,
@@ -44,7 +44,56 @@ class DeepseekProvider(
         supportsAudio = supportsAudio,
         supportsVideo = supportsVideo,
         enableToolCall = enableToolCall,
+        thinkingConfigurations = thinkingConfigurations,
+        thinkingOptionId = thinkingOptionId
     ) {
+
+    companion object {
+        fun create(
+            config: ModelConfigData,
+            client: OkHttpClient,
+            customHeaders: Map<String, String>,
+            apiKeyProvider: ApiKeyProvider,
+            supportsVision: Boolean,
+            supportsAudio: Boolean,
+            supportsVideo: Boolean,
+            enableToolCall: Boolean
+        ): AIService {
+            return when (DeepseekRouting.protocolFor(config.apiEndpoint)) {
+                DeepseekApiProtocol.CHAT_COMPLETIONS ->
+                    DeepseekProvider(
+                        apiEndpoint = config.apiEndpoint,
+                        apiKeyProvider = apiKeyProvider,
+                        modelName = config.modelName,
+                        client = client,
+                        customHeaders = customHeaders,
+                        providerType = ApiProviderType.DEEPSEEK,
+                        supportsVision = supportsVision,
+                        supportsAudio = supportsAudio,
+                        supportsVideo = supportsVideo,
+                        enableToolCall = enableToolCall,
+                        thinkingConfigurations = config.thinkingConfigurations,
+                        thinkingOptionId = config.thinkingOptionId
+                    )
+
+                DeepseekApiProtocol.RESPONSES ->
+                    DeepseekResponsesProvider(
+                        responsesApiEndpoint = config.apiEndpoint,
+                        apiKeyProvider = apiKeyProvider,
+                        modelName = config.modelName,
+                        client = client,
+                        customHeaders = customHeaders,
+                        supportsVision = supportsVision,
+                        supportsAudio = supportsAudio,
+                        supportsVideo = supportsVideo,
+                        enableToolCall = enableToolCall,
+                        thinkingConfigurations = config.thinkingConfigurations,
+                        thinkingOptionId = config.thinkingOptionId,
+                        enableWebSearch = config.enableDeepSeekWebSearch
+                    )
+            }
+        }
+    }
 
     /**
      * 重写创建请求体的方法，以支持DeepSeek的`reasoning_content`参数。
@@ -60,20 +109,16 @@ class DeepseekProvider(
         preserveThinkInHistory: Boolean
     ): RequestBody {
         fun applyThinkingParamsIfNeeded(jsonObject: JSONObject) {
-            val thinkingObject = jsonObject.optJSONObject("thinking") ?: JSONObject()
-            val thinkingType = if (enableThinking) "enabled" else "disabled"
-            thinkingObject.put("type", thinkingType)
-            jsonObject.put("thinking", thinkingObject)
-
-            if (!enableThinking) {
-                AppLogger.d("DeepseekProvider", "DeepSeek thinking mode explicitly set to disabled")
-                return
-            }
-
-            val effort = resolveDeepseekThinkingEffort(context)
-            if (effort != null && !jsonObject.has("reasoning_effort")) {
-                jsonObject.put("reasoning_effort", effort)
-            }
+            ThinkingConfigurationApplier.apply(
+                context = context,
+                requestJson = jsonObject,
+                providerTypeId = ApiProviderType.DEEPSEEK.name,
+                modelName = modelName,
+                apiEndpoint = "",
+                thinkingConfigurations = thinkingConfigurations,
+                enableThinking = enableThinking,
+                optionId = thinkingOptionId,
+            )
         }
 
         // 如果未启用推理模式，直接使用父类的实现
@@ -223,7 +268,7 @@ class DeepseekProvider(
                     put("role", "assistant")
                     put("reasoning_content", queuedAssistantReasoning.orEmpty())
                     if (!queuedAssistantToolText.isNullOrBlank()) {
-                        put("content", buildContentField(context, queuedAssistantToolText!!))
+                        put("content", buildContentField(context, queuedAssistantToolText!!, role = "assistant"))
                     } else {
                         put("content", null)
                     }
@@ -268,7 +313,7 @@ class DeepseekProvider(
                             messagesArray.put(
                                 JSONObject().apply {
                                     put("role", "system")
-                                    put("content", buildContentField(context, originalContent))
+                                    put("content", buildContentField(context, originalContent, role = "system"))
                                 }
                             )
                         }
@@ -305,7 +350,7 @@ class DeepseekProvider(
                                     JSONObject().apply {
                                         put("role", "assistant")
                                         put("reasoning_content", reasoningContent)
-                                        put("content", buildContentField(context, content.ifBlank { "[Empty]" }))
+                                        put("content", buildContentField(context, content.ifBlank { "[Empty]" }, role = "assistant"))
                                     }
                                 )
                             }
@@ -331,7 +376,7 @@ class DeepseekProvider(
                                     JSONObject().apply {
                                         put("role", "assistant")
                                         put("reasoning_content", "")
-                                        put("content", buildContentField(context, originalContent.ifBlank { "[Empty]" }))
+                                        put("content", buildContentField(context, originalContent.ifBlank { "[Empty]" }, role = "assistant"))
                                     }
                                 )
                             }
@@ -396,7 +441,7 @@ class DeepseekProvider(
                             messagesArray.put(
                                 JSONObject().apply {
                                     put("role", "system")
-                                    put("content", buildContentField(context, originalContent))
+                                    put("content", buildContentField(context, originalContent, role = "system"))
                                 }
                             )
                         }
@@ -418,7 +463,7 @@ class DeepseekProvider(
                                 JSONObject().apply {
                                     put("role", "assistant")
                                     put("reasoning_content", reasoningContent)
-                                    put("content", buildContentField(context, content.ifBlank { "[Empty]" }))
+                                    put("content", buildContentField(context, content.ifBlank { "[Empty]" }, role = "assistant"))
                                 }
                             )
                         }
@@ -428,7 +473,7 @@ class DeepseekProvider(
                                 JSONObject().apply {
                                     put("role", "assistant")
                                     put("reasoning_content", "")
-                                    put("content", buildContentField(context, originalContent.ifBlank { "[Empty]" }))
+                                    put("content", buildContentField(context, originalContent.ifBlank { "[Empty]" }, role = "assistant"))
                                 }
                             )
                         }
@@ -439,28 +484,6 @@ class DeepseekProvider(
 
         flushOpenToolCallsAsCancelled("history_end")
         return messagesArray
-    }
-
-    private fun resolveDeepseekThinkingEffort(context: Context): String? {
-        val qualityLevel = runCatching {
-            runBlocking {
-                ApiPreferences.getInstance(context).thinkingQualityLevelFlow.first()
-            }
-        }.getOrElse {
-            AppLogger.w(
-                "DeepseekProvider",
-                "Failed to read thinking quality level for DeepSeek, using provider default",
-                it
-            )
-            return null
-        }
-
-        val efforts = listOf("low", "high", "max", "max", "max")
-        val qualityIndex = qualityLevel.coerceIn(
-            ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
-            ApiPreferences.MAX_THINKING_QUALITY_LEVEL
-        ) - 1
-        return efforts[qualityIndex]
     }
 
     override suspend fun sendMessage(
@@ -481,4 +504,209 @@ class DeepseekProvider(
         // 直接调用父类的sendMessage实现
         return super.sendMessage(context, chatHistory, modelParameters, enableThinking, stream, availableTools, preserveThinkInHistory, onTokensUpdated, onUsageReported, onNonFatalError, enableRetry, recordTokenUsage, onUsageFinalized)
     }
+}
+
+private enum class DeepseekApiProtocol {
+    CHAT_COMPLETIONS,
+    RESPONSES
+}
+
+private object DeepseekRouting {
+    fun protocolFor(endpoint: String): DeepseekApiProtocol {
+        val normalizedEndpoint =
+            endpoint
+                .trim()
+                .removeSuffix("#")
+                .substringBefore('?')
+                .substringBefore('#')
+                .removeSuffix("/")
+        return if (normalizedEndpoint.endsWith("/responses", ignoreCase = true)) {
+            DeepseekApiProtocol.RESPONSES
+        } else {
+            DeepseekApiProtocol.CHAT_COMPLETIONS
+        }
+    }
+}
+
+private class DeepseekResponsesProvider(
+    private val responsesApiEndpoint: String,
+    apiKeyProvider: ApiKeyProvider,
+    modelName: String,
+    client: OkHttpClient,
+    customHeaders: Map<String, String>,
+    supportsVision: Boolean,
+    supportsAudio: Boolean,
+    supportsVideo: Boolean,
+    enableToolCall: Boolean,
+    thinkingConfigurations: String,
+    thinkingOptionId: String,
+    private val enableWebSearch: Boolean
+) : OpenAIProvider(
+    apiEndpoint = responsesApiEndpoint,
+    apiKeyProvider = apiKeyProvider,
+    modelName = modelName,
+    client = client,
+    customHeaders = customHeaders,
+    providerType = ApiProviderType.DEEPSEEK,
+    supportsVision = supportsVision,
+    supportsAudio = supportsAudio,
+    supportsVideo = supportsVideo,
+    enableToolCall = enableToolCall,
+    thinkingConfigurations = thinkingConfigurations,
+    thinkingOptionId = thinkingOptionId
+) {
+    override val useResponsesApi: Boolean = true
+    override val bufferResponsesOutputTextUntilItemDone: Boolean = true
+
+    override fun isResponsesCommentaryMessage(item: JSONObject): Boolean {
+        return item.optString("phase", "").trim().equals("commentary", ignoreCase = true)
+    }
+
+    override fun createRequestBody(
+        context: Context,
+        chatHistory: List<PromptTurn>,
+        modelParameters: List<ModelParameter<*>>,
+        enableThinking: Boolean,
+        stream: Boolean,
+        availableTools: List<ToolPrompt>?,
+        preserveThinkInHistory: Boolean
+    ): RequestBody {
+        val requestChatHistory =
+            if (enableThinking) {
+                chatHistory
+            } else {
+                ChatUtils.stripOpenAiResponsesReasoningMetaTurns(chatHistory)
+            }
+        val requestJson = JSONObject(
+            createRequestBodyInternal(
+                context = context,
+                chatHistory = requestChatHistory,
+                modelParameters = modelParameters,
+                stream = stream,
+                availableTools = availableTools,
+                preserveThinkInHistory = preserveThinkInHistory
+            )
+        )
+        ThinkingConfigurationApplier.apply(
+            context = context,
+            requestJson = requestJson,
+            providerTypeId = ApiProviderType.DEEPSEEK.name,
+            modelName = modelName,
+            apiEndpoint = responsesApiEndpoint,
+            thinkingConfigurations = thinkingConfigurations,
+            enableThinking = enableThinking,
+            optionId = thinkingOptionId,
+        )
+        return createJsonRequestBody(requestJson.toString())
+    }
+
+    override fun customizeFinalRequestObject(
+        requestObject: JSONObject,
+        messagesArray: JSONArray,
+        toolsJson: String?
+    ) {
+        if (enableWebSearch) {
+            appendWebSearchTool(requestObject)
+        }
+        super.customizeFinalRequestObject(requestObject, messagesArray, toolsJson)
+    }
+
+    override fun formatResponsesWebSearchDisplayXml(
+        context: Context,
+        item: JSONObject,
+        response: JSONObject?
+    ): String? {
+        if (item.optString("type", "") != "web_search_call") {
+            return null
+        }
+
+        val action = item.optJSONObject("action")
+        val actionType = action?.optString("type", "")?.trim().orEmpty()
+        val queries = collectResponsesWebSearchQueries(action, actionType)
+        val status = item.optString("status", "").trim()
+        val sources = mergeResponsesWebSearchSources(
+            primary = collectResponsesWebSearchActionSources(action, actionType) +
+                collectResponsesWebSearchSourceArray(action?.optJSONArray("sources")),
+            additional = collectResponsesWebSearchSources(response)
+        )
+        if (queries.isEmpty() && sources.isEmpty()) {
+            return null
+        }
+
+        return buildDeepseekSearchXml(
+            actionType = actionType,
+            queries = queries,
+            status = status,
+            sources = sources,
+        )
+    }
+
+    private fun appendWebSearchTool(requestObject: JSONObject) {
+        val tools = requestObject.optJSONArray("tools") ?: JSONArray().also {
+            requestObject.put("tools", it)
+        }
+        for (index in 0 until tools.length()) {
+            val tool = tools.optJSONObject(index) ?: continue
+            if (tool.optString("type") == "web_search") {
+                requestObject.put("tool_choice", "auto")
+                return
+            }
+        }
+        tools.put(JSONObject().put("type", "web_search"))
+        requestObject.put("tool_choice", "auto")
+    }
+
+    private fun buildDeepseekSearchXml(
+        actionType: String,
+        queries: List<String>,
+        status: String,
+        sources: List<ResponsesWebSearchSource>
+    ): String {
+        return buildString {
+            append("<search")
+            appendXmlAttribute("provider", "deepseek")
+            appendXmlAttribute("action", actionType)
+            appendXmlAttribute("status", status)
+            append(">")
+            queries.forEach { query ->
+                append("\n  <query>")
+                append(escapeXmlText(query))
+                append("</query>")
+            }
+            sources.forEach { source ->
+                append("\n  <source")
+                appendResponsesWebSearchSourceAttributes(this, source)
+                append(" />")
+            }
+            append("\n</search>")
+        }
+    }
+
+    private fun StringBuilder.appendXmlAttribute(name: String, value: String) {
+        if (value.isEmpty()) {
+            return
+        }
+        append(" ")
+        append(name)
+        append("=\"")
+        append(escapeXmlAttribute(value))
+        append("\"")
+    }
+
+    private fun escapeXmlAttribute(text: String): String {
+        return text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&apos;")
+    }
+
+    private fun escapeXmlText(text: String): String {
+        return text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+    }
+
 }

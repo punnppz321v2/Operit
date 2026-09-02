@@ -15,7 +15,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ai.assistance.operit.ui.features.nonox.viewmodel.NonOXViewModel
-import com.ai.nonoassistance.provider.PricingConfig
+import com.ai.nonoassistance.provider.ModelPricing
 
 /**
  * Model pricing display screen.
@@ -30,12 +30,17 @@ fun ModelPricingScreen(
     val pricingState by viewModel.pricingState.collectAsState()
 
     val filteredModels = if (pricingState.selectedProvider != null) {
-        pricingState.pricingData.filter { it.value.providerId == pricingState.selectedProvider }
+        pricingState.pricingData.filterKeys { key ->
+            key.substringBefore("/") == pricingState.selectedProvider
+        }
     } else {
         pricingState.pricingData
     }
 
-    val providers = pricingState.pricingData.values.map { it.providerId }.distinct().sorted()
+    val providers = pricingState.pricingData.keys
+        .map { it.substringBefore("/") }
+        .distinct()
+        .sorted()
 
     Scaffold(
         topBar = {
@@ -176,8 +181,10 @@ fun ModelPricingScreen(
                 }
             } else {
                 // Pricing cards
-                filteredModels.forEach { (modelId, pricing) ->
-                    PricingCard(modelId = modelId, pricing = pricing)
+                filteredModels.forEach { (modelKey, pricing) ->
+                    val providerId = modelKey.substringBefore("/")
+                    val modelId = modelKey.substringAfter("/", modelKey)
+                    PricingCard(modelId = modelId, providerId = providerId, pricing = pricing)
                     Spacer(modifier = Modifier.height(12.dp))
                 }
 
@@ -199,7 +206,8 @@ fun ModelPricingScreen(
 @Composable
 private fun PricingCard(
     modelId: String,
-    pricing: PricingConfig.ModelPricing
+    providerId: String,
+    pricing: ModelPricing
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -219,27 +227,14 @@ private fun PricingCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = pricing.displayName,
+                        text = modelId,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = pricing.providerId,
+                        text = providerId,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                if (pricing.isDeprecated) {
-                    AssistChip(
-                        onClick = { },
-                        label = { Text("Deprecated") },
-                        leadingIcon = {
-                            Icon(
-                                Icons.Default.Warning,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
                     )
                 }
             }
@@ -252,53 +247,20 @@ private fun PricingCard(
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 PricingColumn(
-                    label = "Input",
+                    label = "Input (${pricing.currency})",
                     value = "$${String.format("%.2f", pricing.inputPerMillionTokens)}",
                     sublabel = "/ 1M tokens"
                 )
                 PricingColumn(
-                    label = "Output",
+                    label = "Output (${pricing.currency})",
                     value = "$${String.format("%.2f", pricing.outputPerMillionTokens)}",
                     sublabel = "/ 1M tokens"
                 )
                 PricingColumn(
-                    label = "Context",
-                    value = "${pricing.contextWindow / 1000}K",
-                    sublabel = "tokens"
+                    label = "Updated",
+                    value = pricing.lastUpdated.take(10).ifBlank { "N/A" },
+                    sublabel = "date"
                 )
-            }
-
-            // Capabilities
-            if (pricing.supportsToolCalling || pricing.supportsThinking) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (pricing.supportsToolCalling) {
-                        AssistChip(
-                            onClick = { },
-                            label = { Text("Tools") },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.Build,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        )
-                    }
-                    if (pricing.supportsThinking) {
-                        AssistChip(
-                            onClick = { },
-                            label = { Text("Thinking") },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.Psychology,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        )
-                    }
-                }
             }
         }
     }

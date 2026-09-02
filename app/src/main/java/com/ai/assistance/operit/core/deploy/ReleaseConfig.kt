@@ -61,7 +61,7 @@ class ReleaseConfig {
         val timestamp = Instant.now().toString().take(10)
 
         return buildString {
-            appendLine("## [$getVersionString()] - $timestamp")
+            appendLine("## [${getVersionString()}] - $timestamp")
             appendLine()
 
             val grouped = changes.groupBy { it.type }

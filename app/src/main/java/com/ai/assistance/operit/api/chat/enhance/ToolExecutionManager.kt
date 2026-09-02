@@ -47,7 +47,7 @@ object ToolExecutionManager {
     private val toolRuntimeContextThreadLocal = ThreadLocal<ToolRuntimeContext?>()
 
     // Sanitizer for tool call parameters — fixes XML tag contamination from §10
-    private val toolCallSanitizer = ToolCallSanitizer()
+    private val toolCallSanitizer = ToolCallSanitizer
 
     // Root execution guard — controls root/sudo command permissions per role
     private val rootExecutionGuard = RootExecutionGuard()

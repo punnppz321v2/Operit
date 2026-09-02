@@ -20,7 +20,7 @@ class ToolSanitizerHook : AIToolHook {
         private const val TAG = "ToolSanitizerHook"
     }
 
-    private val sanitizer = ToolCallSanitizer()
+    private val sanitizer = ToolCallSanitizer
 
     override fun onToolCallIntercept(tool: AITool): AIToolHookDecision {
         val sanitizedParams = mutableListOf<ToolParameter>()

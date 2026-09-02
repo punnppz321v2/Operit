@@ -15,7 +15,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ai.assistance.operit.ui.features.nonox.viewmodel.NonOXViewModel
-import com.ai.nonoassistance.memory.ContextBudgetManager
 
 /**
  * Budget stats screen showing context budget usage and token consumption.
@@ -105,7 +104,7 @@ fun BudgetStatsScreen(
                     }
                 }
             } else if (budgetState.stats != null) {
-                val budgetStats = budgetState.stats!!
+                val budgetStats = budgetState.stats ?: return@Scaffold
 
                 // Usage progress
                 Card(
@@ -126,7 +125,7 @@ fun BudgetStatsScreen(
                         )
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        val usagePercent = budgetStats.usagePercentage
+                        val usagePercent = budgetStats.tokenUsagePercent * 100
                         LinearProgressIndicator(
                             progress = { (usagePercent / 100f).coerceIn(0f, 1f) },
                             modifier = Modifier
@@ -169,15 +168,15 @@ fun BudgetStatsScreen(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Default.Speed,
                         title = "Remaining",
-                        value = "${budgetStats.remainingTokens}",
+                        value = "${(budgetStats.maxTokens - budgetStats.usedTokens).coerceAtLeast(0)}",
                         subtitle = "tokens"
                     )
                     StatCard(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Default.Psychology,
                         title = "Summary",
-                        value = if (budgetStats.isAutoSummarizing) "Active" else "Idle",
-                        subtitle = if (budgetStats.isAutoSummarizing) "Compressing history" else "Normal mode"
+                        value = if (budgetStats.shouldSummarize) "Active" else "Idle",
+                        subtitle = if (budgetStats.shouldSummarize) "Compressing history" else "Normal mode"
                     )
                 }
 
@@ -191,14 +190,14 @@ fun BudgetStatsScreen(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Default.AttachMoney,
                         title = "Cost Budget",
-                        value = if (budgetStats.hasCostBudget) "$${String.format("%.2f", budgetStats.costBudget)}" else "Unlimited",
-                        subtitle = if (budgetStats.hasCostBudget) "Max per session" else "No cost limit"
+                        value = budgetStats.maxCostUsd?.let { "$${String.format("%.2f", it)}" } ?: "Unlimited",
+                        subtitle = if (budgetStats.maxCostUsd != null) "Max per session" else "No cost limit"
                     )
                     StatCard(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Default.TrendingUp,
                         title = "Cost Used",
-                        value = "$${String.format("%.4f", budgetStats.costUsed)}",
+                        value = "$${String.format("%.4f", budgetStats.sessionCostUsd)}",
                         subtitle = "Current session"
                     )
                 }
@@ -260,38 +259,39 @@ fun BudgetStatsScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Auto-summarize info
-                if (budgetStats.autoSummarizeThreshold > 0) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
-                        )
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.tertiary
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.tertiary
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "Auto-Summarize",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
                             )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column {
-                                Text(
-                                    text = "Auto-Summarize",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "Triggers at ${budgetStats.autoSummarizeThreshold}% usage. Compresses old history into summaries.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                            Text(
+                                text = if (budgetStats.shouldSummarize) {
+                                    "Context is above summarize threshold."
+                                } else {
+                                    "Context is below summarize threshold."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }

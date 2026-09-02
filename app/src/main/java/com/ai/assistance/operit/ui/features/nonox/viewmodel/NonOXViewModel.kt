@@ -5,9 +5,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ai.assistance.operit.core.integration.NonOIntegrationManager
 import com.ai.assistance.operit.util.AppLogger
-import com.ai.nonoassistance.memory.ContextBudgetManager
-import com.ai.nonoassistance.provider.ModelPricingService
-import com.ai.nonoassistance.provider.PricingConfig
+import com.ai.nonoassistance.memory.BudgetStats
+import com.ai.nonoassistance.provider.ModelPricing
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,7 +49,7 @@ class NonOXViewModel(application: Application) : AndroidViewModel(application) {
 
     data class PricingState(
         val isLoading: Boolean = true,
-        val pricingData: Map<String, PricingConfig.ModelPricing> = emptyMap(),
+        val pricingData: Map<String, ModelPricing> = emptyMap(),
         val selectedProvider: String? = null,
         val error: String? = null
     )
@@ -62,7 +61,7 @@ class NonOXViewModel(application: Application) : AndroidViewModel(application) {
 
     data class BudgetStatsState(
         val isLoading: Boolean = true,
-        val stats: ContextBudgetManager.BudgetStats? = null,
+        val stats: BudgetStats? = null,
         val error: String? = null
     )
 
@@ -91,7 +90,14 @@ class NonOXViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val pricingService = NonOIntegrationManager.pricingService
-                val data = pricingService.getPricing()
+                val providerIds = listOf("deepseek", "google", "openai", "anthropic", "xai", "mistral")
+                val data = providerIds
+                    .flatMap { providerId ->
+                        pricingService.getProviderPricing(providerId).map { (modelId, pricing) ->
+                            "$providerId/$modelId" to pricing
+                        }
+                    }
+                    .toMap()
                 _pricingState.update {
                     it.copy(
                         isLoading = false,
@@ -117,8 +123,15 @@ class NonOXViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val pricingService = NonOIntegrationManager.pricingService
-                pricingService.refreshPricing()
-                val data = pricingService.getPricing()
+                pricingService.clearCache()
+                val providerIds = listOf("deepseek", "google", "openai", "anthropic", "xai", "mistral")
+                val data = providerIds
+                    .flatMap { providerId ->
+                        pricingService.getProviderPricing(providerId).map { (modelId, pricing) ->
+                            "$providerId/$modelId" to pricing
+                        }
+                    }
+                    .toMap()
                 _pricingState.update {
                     it.copy(
                         isLoading = false,
@@ -144,7 +157,7 @@ class NonOXViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val budgetManager = NonOIntegrationManager.contextBudgetManager
-                val stats = budgetManager.getBudgetStats()
+                val stats = budgetManager.getStats()
                 _budgetStatsState.update {
                     it.copy(
                         isLoading = false,

@@ -2,18 +2,19 @@ package com.ai.assistance.operit.core.integration
 
 import android.content.Context
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.nonoassistance.memory.BudgetConfig
+import com.ai.nonoassistance.memory.BudgetStats
 import com.ai.nonoassistance.memory.ContextBudgetManager
 import com.ai.nonoassistance.memory.GlobalMemoryStore
 import com.ai.nonoassistance.orchestration.OrchestrationEngine
+import com.ai.nonoassistance.orchestration.PermissionLevel
 import com.ai.nonoassistance.orchestration.RoleAssignmentConfig
+import com.ai.nonoassistance.orchestration.RoleConfig
+import com.ai.nonoassistance.orchestration.Responsibility
 import com.ai.nonoassistance.provider.OperitProviderAdapter
 import com.ai.nonoassistance.provider.ProviderRegistry
 import com.ai.nonoassistance.provider.ModelPricingService
 import java.io.File
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 
 /**
  * Central integration manager for OperitX new modules.
@@ -45,8 +46,6 @@ object NonOIntegrationManager {
     lateinit var contextBudgetManager: ContextBudgetManager
         private set
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
     /**
      * Initialize all OperitX modules. Call once from OperitApplication.onCreate().
      */
@@ -61,17 +60,30 @@ object NonOIntegrationManager {
         try {
             // 1. Provider system
             providerRegistry = ProviderRegistry()
-            pricingService = ModelPricingService(context)
-
-            // Register existing Operit providers via adapter
-            OperitProviderAdapter.registerExistingProviders(providerRegistry)
+            pricingService = ModelPricingService()
 
             // 2. Orchestration engine
             val defaultRoleConfig = RoleAssignmentConfig(
-                leaderModelId = "deepseek-chat",
-                workerModelIds = listOf("deepseek-chat", "gemini-2.0-flash"),
-                maxWorkers = 3,
-                maxRetries = 3
+                leader = RoleConfig(
+                    model = "deepseek-chat",
+                    responsibilities = listOf(
+                        Responsibility.DECOMPOSE_TASK,
+                        Responsibility.REVIEW_OUTPUT,
+                        Responsibility.DISPATCH_FIX
+                    ),
+                    permission = PermissionLevel.FULL
+                ),
+                workers = listOf(
+                    RoleConfig(
+                        model = "gemini-2.0-flash",
+                        responsibilities = listOf(
+                            Responsibility.EXECUTE_SUBTASK,
+                            Responsibility.REPORT_RESULT
+                        ),
+                        permission = PermissionLevel.RESTRICTED
+                    )
+                ),
+                maxWorkersPerSession = 3
             )
             orchestrationEngine = OrchestrationEngine(defaultRoleConfig)
 
@@ -81,19 +93,11 @@ object NonOIntegrationManager {
             memoryStore = GlobalMemoryStore(memoryDir)
 
             contextBudgetManager = ContextBudgetManager(
-                maxTokens = 256_000,
-                autoSummarizeThreshold = 0.8
+                config = BudgetConfig(
+                    maxTokens = 256_000,
+                    autoSummarizeThreshold = 0.8
+                )
             )
-
-            // 4. Initialize pricing service (fetch remote pricing in background)
-            scope.launch {
-                try {
-                    pricingService.initialize()
-                    AppLogger.i(TAG, "Model pricing loaded successfully")
-                } catch (e: Exception) {
-                    AppLogger.w(TAG, "Failed to load remote pricing, using defaults: ${e.message}")
-                }
-            }
 
             initialized = true
             AppLogger.i(TAG, "NonOIntegrationManager initialized successfully")
@@ -108,15 +112,19 @@ object NonOIntegrationManager {
      */
     fun getProviderAdapter(): OperitProviderAdapter {
         check(initialized) { "NonOIntegrationManager not initialized" }
-        return OperitProviderAdapter(providerRegistry)
+        return OperitProviderAdapter(
+            id = "operit",
+            displayName = "Operit",
+            underlyingServiceId = "OPERIT"
+        )
     }
 
     /**
      * Get budget stats for display in UI.
      */
-    fun getBudgetStats(): ContextBudgetManager.BudgetStats {
+    fun getBudgetStats(): BudgetStats {
         check(initialized) { "NonOIntegrationManager not initialized" }
-        return contextBudgetManager.getBudgetStats()
+        return contextBudgetManager.getStats()
     }
 
     /**
